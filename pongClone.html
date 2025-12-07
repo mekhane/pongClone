@@ -1,0 +1,544 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Pong Local (2 Jugadores) con Efecto Parabólico y Controles Táctiles</title>
+    <meta name="viewport" content="width=device-width, initial-scale=0.8, maximum-scale=2.0, user-scalable=no">
+
+    <style>
+      /* 1. Definición de la Fuente Atari (Requiere que AtariSmall.ttf esté en el mismo directorio) */
+      @font-face {
+        font-family: 'AtariSmall';
+        src: url('AtariSmall.ttf') format('truetype');
+        font-weight: normal;
+        font-style: normal;
+      }
+
+      /* 2. Estilos Base y Fuente */
+      body, #scoreDisplay {
+        font-family: 'AtariSmall', monospace;
+      }
+
+      body {
+        font-size: 20px;
+        text-align: center;
+        margin: 0;
+        padding: 20px 0;
+        background-color: #f7f7f7;
+        /* Prevenir scroll en móviles */
+        touch-action: manipulation;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      .main-wrapper {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        max-width: 900px;
+        margin: 0 auto;
+      }
+
+      .game-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        margin: 0;
+      }
+
+      #pongCanvas {
+        background-color: #a4d4a4;
+        border: 2px solid black;
+        display: block;
+      }
+
+      #scoreDisplay {
+        font-size: 48px;
+        font-weight: bold;
+        position: absolute;
+        width: 600px; /* Ancho del canvas */
+        top: 30px;
+        color: #333;
+        pointer-events: none;
+      }
+
+      /* 3. Estilos de Botones Táctiles */
+      .control-panel {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-around;
+        height: 400px; /* Misma altura que el canvas */
+        padding: 0 10px;
+      }
+
+      .control-button {
+        width: 50px;
+        height: 50px;
+        border: 2px solid #333;
+        border-radius: 5px;
+        font-size: 30px;
+        line-height: 50px;
+        cursor: pointer;
+        user-select: none;
+        touch-action: manipulation;
+        transition: transform 0.1s;
+      }
+
+      .control-button:active {
+        transform: scale(0.9);
+      }
+
+      /* Colores P1 (Izquierda) -> ROJO */
+      .p1-up, .p1-down {
+        background-color: #ff6c6c; /* Rojo */
+        border-color: #800000;
+        color: #800000;
+      }
+
+      /* Colores P2 (Derecha) -> VERDE */
+      .p2-up, .p2-down {
+        background-color: #6cff6c; /* Verde */
+        border-color: #008000;
+        color: #008000;
+      }
+
+      /* Estilos para dispositivos móviles */
+      @media (max-width: 800px) {
+          .main-wrapper {
+              flex-direction: column;
+          }
+          .control-panel {
+              flex-direction: row;
+              height: auto;
+              width: 100%;
+              justify-content: space-around;
+              padding: 10px 0;
+          }
+          .p1-panel, .p2-panel {
+              display: flex;
+              gap: 10px;
+          }
+      }
+
+    </style>
+
+  </head>
+
+  <body>
+
+    <div class="main-wrapper">
+
+        <div class="control-panel p1-panel">
+            <div id="p1Up" class="control-button p1-up">▲</div>
+            <div id="p1Down" class="control-button p1-down">▼</div>
+        </div>
+
+        <div class="game-container">
+            <div style="position: relative; width: 600px; height: 400px;">
+                <canvas id="pongCanvas" width="600" height="400"></canvas>
+                <div id="scoreDisplay"></div>
+            </div>
+
+            </div>
+
+        <div class="control-panel p2-panel">
+            <div id="p2Up" class="control-button p2-up">▲</div>
+            <div id="p2Down" class="control-button p2-down">▼</div>
+        </div>
+    </div>
+
+    <script>
+        // === CONFIGURACIÓN BASE ===
+        const canvas = document.getElementById('pongCanvas');
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width;
+        const H = canvas.height;
+        const scoreDisplay = document.getElementById('scoreDisplay');
+
+        // Botones
+        const p1UpBtn = document.getElementById('p1Up');
+        const p1DownBtn = document.getElementById('p1Down');
+        const p2UpBtn = document.getElementById('p2Up');
+        const p2DownBtn = document.getElementById('p2Down');
+
+
+        // --- PROPIEDADES DE JUGABILIDAD ---
+        const PADDLE_WIDTH = 10;
+        const PADDLE_HEIGHT = 80;
+        const BALL_SIZE = 10;
+        let PADDLE_SPEED_BASE = 8;
+        const PADDLE_SPEED_ACCEL = 12;
+        const BALL_SPEED_X_INITIAL = 5;
+        const BALL_SPEED_Y_INITIAL = 5;
+        const WIN_SCORE = 10;
+        const BACKGROUND_COLOR = '#a4d4a4';
+
+        // --- CONSTANTE CRÍTICA PARA EL EFECTO PARABÓLICO ---
+        const PARABOLIC_ACCELERATION_FACTOR = 0.1;
+
+        // --- ESTADO DEL JUEGO ---
+        let p1Y, p2Y;
+        let p1Dy = 0;
+        let p2Dy = 0;
+        let p1CurrentSpeed = PADDLE_SPEED_BASE;
+        let p2CurrentSpeed = PADDLE_SPEED_BASE;
+
+        let ball = {};
+        let score1 = 0;
+        let score2 = 0;
+
+        let keysPressed = {};
+        let gameActive = true;
+        let serveTimer = 0;
+        let lastGoalSide = 0;
+
+        // --- LÓGICA DE ACELERACIÓN DE PALETA ---
+        const ACCELERATION_THRESHOLD_MS = 180;
+        let p1PressStart = 0;
+        let p2PressStart = 0;
+
+        function resetBall(servingSide = 0) {
+            ball = {
+                x: W / 2 - BALL_SIZE / 2,
+                y: H / 2 - BALL_SIZE / 2,
+                dx: 0,
+                dy: 0,
+                accelY: 0
+            };
+
+            p1Y = H / 2 - PADDLE_HEIGHT / 2;
+            p2Y = H / 2 - PADDLE_HEIGHT / 2;
+
+            if (serveTimer) clearInterval(serveTimer);
+
+            let sSide = servingSide;
+            if (sSide === 0) {
+                sSide = (lastGoalSide === 1) ? 2 : 1;
+                if (lastGoalSide === 0) sSide = 1;
+            }
+
+            startServe(sSide);
+        }
+
+        function startServe(servingSide) {
+            let countdown = 3;
+            scoreDisplay.innerHTML = `<span style="font-size: 100px;">${countdown}</span>`;
+
+            serveTimer = setInterval(() => {
+                countdown--;
+                if (countdown > 0) {
+                    scoreDisplay.innerHTML = `<span style="font-size: 100px;">${countdown}</span>`;
+                } else {
+                    clearInterval(serveTimer);
+                    scoreDisplay.style.fontSize = '48px';
+
+                    const directionX = (servingSide === 1) ? BALL_SPEED_X_INITIAL : -BALL_SPEED_X_INITIAL;
+
+                    // Saque con ángulo variable
+                    const randomFactor = (Math.random() * 0.5) + 0.5;
+                    const verticalDirection = (Math.random() < 0.5 ? -1 : 1);
+
+                    ball.dx = directionX;
+                    ball.dy = verticalDirection * BALL_SPEED_Y_INITIAL * randomFactor;
+                    ball.accelY = 0;
+
+                    updateScoreDisplay();
+                }
+            }, 1000);
+        }
+
+        // === LÓGICA PRINCIPAL DE LA FÍSICA ===
+
+        function updatePhysics() {
+            if (!gameActive || ball.dx === 0) return;
+
+            // 1. Movimiento Parabólico: Aplicar la aceleración (Spin) a la velocidad vertical (Dy)
+            ball.dy += ball.accelY;
+
+            // 2. Movimiento Normal: Aplicar velocidad a la posición
+            ball.x += ball.dx;
+            ball.y += ball.dy;
+
+            // 3. Colisión con Paredes Superior/Inferior
+            if (ball.y <= 0 || ball.y >= H - BALL_SIZE) {
+
+                // Ajuste de posición (para evitar incrustaciones)
+                if (ball.y <= 0) {
+                    ball.y = 0;
+                } else {
+                    ball.y = H - BALL_SIZE;
+                }
+
+                // Invertir la velocidad vertical.
+                ball.dy = -ball.dy;
+
+                // INVERTIR Y REDUCIR EL SPIN A LA MITAD
+                ball.accelY = -ball.accelY / 2;
+            }
+
+
+            // 4. Colisión con Paleta P1 (Izquierda)
+            if (ball.x <= PADDLE_WIDTH &&
+                ball.y + BALL_SIZE >= p1Y &&
+                ball.y <= p1Y + PADDLE_HEIGHT) {
+
+                // 4a. Rebote horizontal
+                ball.dx = Math.abs(ball.dx);
+
+                // 4b. Rebote vertical (Ángulo Base)
+                const relativeIntersectY = (p1Y + PADDLE_HEIGHT / 2) - (ball.y + BALL_SIZE / 2);
+                const normalizedRelativeIntersectionY = (relativeIntersectY / (PADDLE_HEIGHT / 2));
+                ball.dy = normalizedRelativeIntersectionY * -BALL_SPEED_Y_INITIAL;
+
+                // 4c. Aplicar el nuevo EFECTO PARABÓLICO (SPIN)
+                ball.accelY = p1Dy * PARABOLIC_ACCELERATION_FACTOR;
+
+            }
+
+            // 5. Colisión con Paleta P2 (Derecha)
+            else if (ball.x >= W - PADDLE_WIDTH - BALL_SIZE &&
+                     ball.y + BALL_SIZE >= p2Y &&
+                     ball.y <= p2Y + PADDLE_HEIGHT) {
+
+                // 5a. Rebote horizontal
+                ball.dx = -Math.abs(ball.dx);
+
+                // 5b. Rebote vertical (Ángulo Base)
+                const relativeIntersectY = (p2Y + PADDLE_HEIGHT / 2) - (ball.y + BALL_SIZE / 2);
+                const normalizedRelativeIntersectionY = (relativeIntersectY / (PADDLE_HEIGHT / 2));
+                ball.dy = normalizedRelativeIntersectionY * -BALL_SPEED_Y_INITIAL;
+
+                // 5c. Aplicar el nuevo EFECTO PARABÓLICO (SPIN)
+                ball.accelY = p2Dy * PARABOLIC_ACCELERATION_FACTOR;
+            }
+
+            // 6. Goles
+            if (ball.x < 0 - BALL_SIZE) {
+                score2++;
+                lastGoalSide = 2;
+                checkWin();
+            } else if (ball.x > W) {
+                score1++;
+                lastGoalSide = 1;
+                checkWin();
+            }
+        }
+
+        function checkWin() {
+            if (score1 >= WIN_SCORE || score2 >= WIN_SCORE) {
+                gameActive = false;
+                if (serveTimer) clearInterval(serveTimer);
+                const winner = (score1 >= WIN_SCORE) ? "Jugador 1" : "Jugador 2";
+                scoreDisplay.innerHTML = `<span style="font-size: 60px;">¡${winner} GANA!</span><br><span style="font-size: 24px;">Presiona ESPACIO para reiniciar.</span>`;
+            } else {
+                resetBall(lastGoalSide);
+            }
+        }
+
+        // === CONTROL DE ENTRADA Y LÓGICA DE JUEGO ===
+
+        function checkAcceleration(player) {
+            const now = Date.now();
+            if (player === 1) {
+                // Verificar si P1 está presionando una tecla o un botón
+                if (keysPressed['w'] || keysPressed['s'] || keysPressed['p1up'] || keysPressed['p1down']) {
+                    const elapsed = now - p1PressStart;
+                    p1CurrentSpeed = (elapsed >= ACCELERATION_THRESHOLD_MS) ? PADDLE_SPEED_ACCEL : PADDLE_SPEED_BASE;
+                }
+            } else if (player === 2) {
+                // Verificar si P2 está presionando una tecla o un botón
+                if (keysPressed['arrowup'] || keysPressed['arrowdown'] || keysPressed['p2up'] || keysPressed['p2down']) {
+                    const elapsed = now - p2PressStart;
+                    p2CurrentSpeed = (elapsed >= ACCELERATION_THRESHOLD_MS) ? PADDLE_SPEED_ACCEL : PADDLE_SPEED_BASE;
+                }
+            }
+        }
+
+        function updatePaddles() {
+            if (!gameActive || ball.dx === 0) {
+                 p1Dy = 0; p2Dy = 0; return;
+            }
+
+            // Actualizar P1
+            checkAcceleration(1);
+            p1Y += (p1Dy < 0) ? -p1CurrentSpeed : (p1Dy > 0) ? p1CurrentSpeed : 0;
+            p1Y = Math.max(0, Math.min(H - PADDLE_HEIGHT, p1Y));
+
+            // Actualizar P2
+            checkAcceleration(2);
+            p2Y += (p2Dy < 0) ? -p2CurrentSpeed : (p2Dy > 0) ? p2CurrentSpeed : 0;
+            p2Y = Math.max(0, Math.min(H - PADDLE_HEIGHT, p2Y));
+        }
+
+        // --- MANEJADORES DE TECLADO ---
+
+        document.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            keysPressed[key] = true;
+
+            // Controles P1
+            if (key === 'w') {
+                if (p1Dy >= 0) p1PressStart = Date.now();
+                p1Dy = -1;
+            } else if (key === 's') {
+                if (p1Dy <= 0) p1PressStart = Date.now();
+                p1Dy = 1;
+            }
+
+            // Controles P2
+            if (e.key === 'ArrowUp') {
+                if (p2Dy >= 0) p2PressStart = Date.now();
+                p2Dy = -1;
+            } else if (e.key === 'ArrowDown') {
+                if (p2Dy <= 0) p2PressStart = Date.now();
+                p2Dy = 1;
+            }
+
+            // Reinicio de Partida
+            if (e.key === ' ' && !gameActive) {
+                score1 = 0;
+                score2 = 0;
+                gameActive = true;
+                lastGoalSide = 0;
+                resetBall(1);
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            keysPressed[key] = false;
+
+            // Stop P1
+            if ((key === 'w' && p1Dy < 0) || (key === 's' && p1Dy > 0)) {
+                const isWReleased = key === 'w' && p1Dy < 0;
+                const isSReleased = key === 's' && p1Dy > 0;
+                const isStillPressing = keysPressed['w'] || keysPressed['s'];
+
+                if ((isWReleased || isSReleased) && !isStillPressing) {
+                    p1Dy = 0;
+                    p1CurrentSpeed = PADDLE_SPEED_BASE;
+                }
+            }
+
+            // Stop P2
+            if ((key === 'arrowup' && p2Dy < 0) || (key === 'arrowdown' && p2Dy > 0)) {
+                const isUpReleased = key === 'arrowup' && p2Dy < 0;
+                const isDownReleased = key === 'arrowdown' && p2Dy > 0;
+                const isStillPressing = keysPressed['arrowup'] || keysPressed['arrowdown'];
+
+                if ((isUpReleased || isDownReleased) && !isStillPressing) {
+                    p2Dy = 0;
+                    p2CurrentSpeed = PADDLE_SPEED_BASE;
+                }
+            }
+        });
+
+        // --- MANEJADORES DE BOTONES TÁCTILES ---
+
+        function handleStart(playerId, direction) {
+            const isP1 = playerId === 1;
+            const buttonKey = isP1
+                ? (direction < 0 ? 'p1up' : 'p1down')
+                : (direction < 0 ? 'p2up' : 'p2down');
+
+            keysPressed[buttonKey] = true;
+
+            if (isP1) {
+                if (p1Dy * direction <= 0) p1PressStart = Date.now();
+                p1Dy = direction;
+            } else {
+                if (p2Dy * direction <= 0) p2PressStart = Date.now();
+                p2Dy = direction;
+            }
+        }
+
+        function handleEnd(playerId, direction) {
+            const isP1 = playerId === 1;
+            const buttonKey = isP1
+                ? (direction < 0 ? 'p1up' : 'p1down')
+                : (direction < 0 ? 'p2up' : 'p2down');
+
+            keysPressed[buttonKey] = false;
+
+            // Revisar si queda otra tecla/botón de la misma paleta presionado
+            const stillPressingOpposite = isP1
+                ? keysPressed['p1up'] || keysPressed['p1down'] || keysPressed['w'] || keysPressed['s']
+                : keysPressed['p2up'] || keysPressed['p2down'] || keysPressed['arrowup'] || keysPressed['arrowdown'];
+
+            if (!stillPressingOpposite) {
+                if (isP1) {
+                    p1Dy = 0;
+                    p1CurrentSpeed = PADDLE_SPEED_BASE;
+                } else {
+                    p2Dy = 0;
+                    p2CurrentSpeed = PADDLE_SPEED_BASE;
+                }
+            }
+        }
+
+        // Asignar eventos a los botones (soporte para touch y mouse)
+        // P1 Up (ROJO)
+        p1UpBtn.addEventListener('mousedown', () => handleStart(1, -1));
+        p1UpBtn.addEventListener('mouseup', () => handleEnd(1, -1));
+        p1UpBtn.addEventListener('touchstart', (e) => { e.preventDefault(); handleStart(1, -1); });
+        p1UpBtn.addEventListener('touchend', (e) => { e.preventDefault(); handleEnd(1, -1); });
+
+        // P1 Down (ROJO)
+        p1DownBtn.addEventListener('mousedown', () => handleStart(1, 1));
+        p1DownBtn.addEventListener('mouseup', () => handleEnd(1, 1));
+        p1DownBtn.addEventListener('touchstart', (e) => { e.preventDefault(); handleStart(1, 1); });
+        p1DownBtn.addEventListener('touchend', (e) => { e.preventDefault(); handleEnd(1, 1); });
+
+        // P2 Up (VERDE)
+        p2UpBtn.addEventListener('mousedown', () => handleStart(2, -1));
+        p2UpBtn.addEventListener('mouseup', () => handleEnd(2, -1));
+        p2UpBtn.addEventListener('touchstart', (e) => { e.preventDefault(); handleStart(2, -1); });
+        p2UpBtn.addEventListener('touchend', (e) => { e.preventDefault(); handleEnd(2, -1); });
+
+        // P2 Down (VERDE)
+        p2DownBtn.addEventListener('mousedown', () => handleStart(2, 1));
+        p2DownBtn.addEventListener('mouseup', () => handleEnd(2, 1));
+        p2DownBtn.addEventListener('touchstart', (e) => { e.preventDefault(); handleStart(2, 1); });
+        p2DownBtn.addEventListener('touchend', (e) => { e.preventDefault(); handleEnd(2, 1); });
+
+
+        // === FUNCIONES DE DIBUJO ===
+
+        function drawRect(x, y, w, h, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, w, h);
+        }
+
+        function updateScoreDisplay() {
+            scoreDisplay.innerHTML = `<span style="float: left; padding-left: ${W / 4}px;">${score1}</span><span style="float: right; padding-right: ${W / 4}px;">${score2}</span>`;
+        }
+
+        function draw() {
+            // Fondo
+            drawRect(0, 0, W, H, BACKGROUND_COLOR);
+
+            // Línea central
+            drawRect(W / 2 - 1, 0, 2, H, 'rgba(0,0,0,0.2)');
+
+            // Paletas y Bola
+            drawRect(0, p1Y, PADDLE_WIDTH, PADDLE_HEIGHT, 'black');
+            drawRect(W - PADDLE_WIDTH, p2Y, PADDLE_WIDTH, PADDLE_HEIGHT, 'black');
+            drawRect(ball.x, ball.y, BALL_SIZE, BALL_SIZE, 'black');
+        }
+
+        function gameLoop() {
+            updatePaddles();
+            updatePhysics();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- INICIO ---
+        resetBall(1);
+        updateScoreDisplay();
+        gameLoop();
+    </script>
+
+  </body>
+</html>
